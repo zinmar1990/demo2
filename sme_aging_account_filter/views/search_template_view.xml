@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+<data>
+    <template id="search_template_accounts">
+        <a type="button" class="dropdown-toggle" data-toggle="dropdown">
+            <span class="fa fa-book"/>
+            Accounts:
+            <t t-set="selected_accounts" t-value="options.get('name_account_group') or ', '.join(account.get('code') for account in options['accounts'] if account.get('selected'))"/>
+            <t t-if="selected_accounts">
+                <t t-esc="selected_accounts"/>
+            </t>
+            <t t-else="">
+                All
+            </t>
+        </a>
+        <div class="dropdown-menu o_filters_menu" role="menu">
+            <t t-foreach="options['accounts']" t-as="a">
+                <t t-if="a.get('id') == 'divider'">
+                    <div role="separator" class="dropdown-divider"/>
+                    <b role="menuitem" class="ml4 dropdown-item-text"><t t-esc="a.get('name')"/></b>
+                    <div role="separator" class="dropdown-divider"/>
+                </t>
+                <t t-if="a.get('id') != 'divider'">
+                    <t t-if="a.get('id') == 'group'">
+                        <a role="menuitem" class="dropdown-item js_account_report_group_choice_filter" data-filter="accounts" t-att-data-id="a.get('id')" t-att-data-member-ids="a.get('ids')">
+                            <t t-esc="a.get('name')"/>
+                        </a>
+                    </t>
+                    <t t-else="">
+                        <a role="menuitem" class="dropdown-item js_account_report_choice_filter" t-att-title="a.get('name')+ '-' + a.get('code')" t-att-data-id="a.get('id')" data-filter="accounts">
+                            <t t-esc="a.get('name')"/>
+                        </a>
+                    </t>
+                </t>
+            </t>
+        </div>
+    </template>
+
+    <template id="search_template_aging">
+        <div class="btn-group o_dropdown o_account_reports_filter_date" t-if="options.get('date') != None">
+            <t t-call="account_reports.search_template_date_filter"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_date_cmp" t-if="options.get('comparison') != None">
+            <t t-call="account_reports.search_template_comparison"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_journals" t-if="options.get('journals') != None">
+            <t t-call="account_reports.search_template_journals"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_account_type" t-if="options.get('account_type') != None">
+            <t t-call="account_reports.search_template_account_type"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_analytic" t-if="options.get('analytic') != None or options.get('analytic_tags') != None">
+            <t t-call="account_reports.search_template_analytic"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_ir_filters" t-if="options.get('ir_filters') != None">
+            <t t-call="account_reports.search_template_ir_filters"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_partner" t-if="options.get('partner')">
+            <t t-call="account_reports.search_template_partner"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_accounts" t-if="options.get('accounts') != None">
+                <t t-call="sme_aging_account_filter.search_template_accounts"/>
+        </div>
+        <div id="extra_options_dropdown" class="btn-group o_dropdown o_account_reports_filter_bool" t-if="options.get('cash_basis') != None or options.get('all_entries') != None or options.get('unfold_all') != None">
+            <t t-call="account_reports.search_template_extra_options"/>
+        </div>
+    </template>
+
+
+
+    <template id="filter_info_template_inherit" inherit_id="account_reports.filter_info_template" priority="1">
+        <xpath expr="//div[@class='col-4'][2]" position="inside">
+           <div class="col-12">
+                <t t-if="options.get('accounts')">
+                    Accounts:
+                    <t t-set="account_value" t-value="'All'"/>
+                    <t t-foreach="options['accounts']" t-as="a">
+                        <t t-if="a.get('selected') == True">
+                            <t t-set="account_value" t-value="''"/>
+                            <t t-esc="a.get('code')"/>
+                        </t>
+                    </t>
+                    <t t-esc="account_value"/>
+                </t>
+            </div>
+        </xpath>
+    </template>
+</data>
+</odoo>
