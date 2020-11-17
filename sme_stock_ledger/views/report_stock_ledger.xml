@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <template id="line_template_stock_ledger_report" inherit_id="account_reports.line_template" primary="True">
+            <xpath expr="//span[hasclass('o_account_reports_caret_icon')]" position="before">
+                <t t-if="line.get('trust') == 'good'">
+                    <span class="fa fa-circle color-green trust-partner" role="img" aria-label="Partner ledger is good" title="Partner ledger is good"></span>
+                </t>
+                <t t-if="line.get('trust') == 'bad'">
+                    <span class="fa fa-circle color-red trust-partner" role="img" aria-label="Partner ledger is bad" title="Partner ledger is bad"></span>
+                </t>
+                <t t-if="line.get('trust') == 'normal'">
+                    <span class="fa fa-circle color-transparent trust-partner" role="img" aria-label="Partner ledger is normal" title="Partner ledger is normal"></span>
+                </t>
+            </xpath>
+            <xpath expr="//div[hasclass('o_account_reports_domain_dropdown')]/*[last()]" position="before">
+                <a role="menuitem" tabindex="-1" t-att-data-id="line['id']" action="open_document" groups="account.group_account_user" class="dropdown-item">View Stock Move</a>
+           </xpath>
+        </template>
+    </data>
+</odoo>

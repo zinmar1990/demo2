@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Account Financial Report Assets -->
+        <template id="stock_custom_reports_backend" inherit_id="web.assets_backend" active="True">
+            <xpath expr="." position="inside">
+                <script type="text/javascript" src="/sme_stock_ledger/static/src/js/stock_custom_reports.js"></script>
+            </xpath>
+        </template>
+    </data>
+</odoo>
