@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+<data>
+    <template id="template_stock_ledger_report" inherit_id="account_reports.main_template" primary="True">
+        <xpath expr="//div[hasclass('o_account_reports_header')]" position="replace">
+            <div class="o_account_reports_header">
+                <div class="print_only"><h2><t t-esc="report.get('name')"></t></h2></div>
+                <t t-if="model._name == 'stock.ledger'">
+                    <div class="o_account_reports_filter_input_wrapper no_print">
+                        <span class="searchIcon"><i class="fa fa-search" role="img" aria-label="Search" title="Search"></i></span>
+                        <input class="o_account_reports_filter_input" type="text" placeholder="Search Product" />
+                    </div>
+                </t>
+                <t t-call="account_reports.filter_info_template"/>
+            </div>
+        </xpath>
+    </template>
+
+    <template id="search_template_extra_options">
+        <a type="button" class="dropdown-toggle" data-toggle="dropdown">
+            <span class="fa fa-filter"/> Options:
+            <t t-if="options.get('all_entries') != None" groups="account.group_account_user">
+                <t t-if="not options['all_entries']">Done Moves Only</t>
+            </t>
+
+        </a>
+        <div class="dropdown-menu o_filters_menu" role="menu">
+<!--            <a role="menuitem" class="dropdown-item js_account_report_bool_filter" t-if="options.get('all_entries') != None" title="Exclude draft moves" data-filter="all_entries" groups="account.group_account_user">All Moves Without Draft</a>-->
+            <a role="menuitem" class="dropdown-item js_account_report_bool_filter" t-if="options.get('unfold_all') != None" title="Unfold" data-filter="unfold_all">Unfold All</a>
+        </div>
+    </template>
+
+     <template id="search_template">
+        <div class="btn-group o_dropdown o_account_reports_filter_date" t-if="options.get('date') != None">
+            <t t-call="account_reports.search_template_date_filter"/>
+        </div>
+        <div class="btn-group o_dropdown o_account_reports_filter_date_cmp" t-if="options.get('comparison') != None">
+            <t t-call="account_reports.search_template_comparison"/>
+        </div>
+
+        <div id="extra_options_dropdown" class="btn-group o_dropdown o_account_reports_filter_bool" t-if="options.get('cash_basis') != None or options.get('all_entries') != None or options.get('unfold_all') != None">
+            <t t-call="sme_stock_ledger.search_template_extra_options"/>
+        </div>
+    </template>
+
+
+     </data>
+</odoo>
