@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+       <record id="view_quotation_tree_inherit" model="ir.ui.view">
+            <field name="name">sale.order.tree.inherit</field>
+            <field name="model">sale.order</field>
+            <field name="inherit_id" ref="sale.view_quotation_tree"/>
+            <field name="mode">primary</field>
+            <field name="arch" type="xml">
+                 <field name="create_date" position="replace">
+                     <field name="date_order"/>
+                 </field>
+            </field>
+        </record>
+    </data>
+</odoo>
