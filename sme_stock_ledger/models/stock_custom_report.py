@@ -54,12 +54,8 @@ class StockCustomReport(models.AbstractModel):
     filter_date = None
     filter_all_entries = None
     filter_comparison = None
-    filter_journals = None
-    # filter_analytic = None
+    filter_locations = True
     filter_unfold_all = None
-    filter_hierarchy = None
-    filter_partner = None
-    order_selected_column = None
 
     ####################################################
     # OPTIONS: multi_company
@@ -99,73 +95,54 @@ class StockCustomReport(models.AbstractModel):
             return [('company_id', '=', self.env.company.id)]
 
     ####################################################
-    # OPTIONS: journals
+    # OPTIONS: Accounts
     ####################################################
 
     @api.model
-    def _get_filter_journals(self):
-        return self.env['account.journal'].search([
+    def _get_filter_locations(self):
+        return self.env['stock.location'].search([('usage', '=','internal'),('location_id.usage', '=','view'),
             ('company_id', 'in', self.env.user.company_ids.ids or [self.env.company.id])
         ], order="company_id, name")
 
-    @api.model
-    def _get_filter_journal_groups(self):
-        journals = self._get_filter_journals()
-        groups = self.env['account.journal.group'].search([], order='sequence')
-        ret = self.env['account.journal.group']
-        for journal_group in groups:
-            # Only display the group if it doesn't exclude every journal
-            if journals - journal_group.excluded_journal_ids:
-                ret += journal_group
-        return ret
+
 
     @api.model
-    def _init_filter_journals(self, options, previous_options=None):
-        if self.filter_journals is None:
+    def _init_filter_locations(self, options, previous_options=None):
+        if self.filter_locations is None:
             return
 
         previous_company = False
-        if previous_options and previous_options.get('journals'):
-            journal_map = dict((opt['id'], opt['selected']) for opt in previous_options['journals'] if opt['id'] != 'divider' and 'selected' in opt)
+        if previous_options and previous_options.get('locations'):
+            location_map = dict((opt['id'], opt['selected']) for opt in previous_options['locations'] if opt['id'] != 'divider' and 'selected' in opt)
         else:
-            journal_map = {}
-        options['journals'] = []
+            location_map = {}
+        options['locations'] = []
 
-        group_header_displayed = False
         default_group_ids = []
-        for group in self._get_filter_journal_groups():
-            journal_ids = (self._get_filter_journals() - group.excluded_journal_ids).ids
-            if len(journal_ids):
-                if not group_header_displayed:
-                    group_header_displayed = True
-                    options['journals'].append({'id': 'divider', 'name': _('Journal Groups')})
-                    default_group_ids = journal_ids
-                options['journals'].append({'id': 'group', 'name': group.name, 'ids': journal_ids})
-
-        for j in self._get_filter_journals():
-            if j.company_id != previous_company:
-                options['journals'].append({'id': 'divider', 'name': j.company_id.name})
-                previous_company = j.company_id
-            options['journals'].append({
-                'id': j.id,
-                'name': j.name,
-                'code': j.code,
-                'type': j.type,
-                'selected': journal_map.get(j.id, j.id in default_group_ids),
+        for l in self._get_filter_locations():
+            if l.company_id != previous_company:
+                options['locations'].append({'id': 'divider', 'name': l.company_id.name})
+                previous_company = l.company_id
+            options['locations'].append({
+                'id': l.id,
+                'name': l.complete_name,
+                'code': l.barcode or '-',
+                'type': l.usage,
+                'selected': location_map.get(l.id, l.id in default_group_ids),
             })
 
     @api.model
-    def _get_options_journals(self, options):
+    def _get_options_locations(self, options):
         return [
-            journal for journal in options.get('journals', []) if
-            not journal['id'] in ('divider', 'group') and journal['selected']
+            location for location in options.get('locations', []) if
+            not location['id'] in ('divider', 'group') and location['selected']
         ]
 
     @api.model
-    def _get_options_journals_domain(self, options):
+    def _get_options_locations_domain(self, options):
         # Make sure to return an empty array when nothing selected to handle archived journals.
-        selected_journals = self._get_options_journals(options)
-        return selected_journals and [('journal_id', 'in', [j['id'] for j in selected_journals])] or []
+        selected_locations = self._get_options_locations(options)
+        return selected_locations and [('location_id', 'in', [l['id'] for l in selected_locations])] or []
 
     ####################################################
     # OPTIONS: date + comparison
@@ -784,7 +761,7 @@ class StockCustomReport(models.AbstractModel):
                 'main_table_header_template': 'account_reports.main_table_header',
                 'line_template': 'account_reports.line_template',
                 'footnotes_template': 'account_reports.footnotes_template',
-                'search_template': 'account_reports.search_template',
+                'search_template': 'sme_stock_ledger.search_template',
         }
 
     #TO BE OVERWRITTEN
@@ -931,6 +908,8 @@ class StockCustomReport(models.AbstractModel):
             ctx['date_to'] = options['date'].get('date_to') or options['date'].get('date')
         if options.get('all_entries') is not None:
             ctx['state'] = options.get('all_entries') and 'all' or 'posted'
+        if options.get('locations'):
+            ctx['location_ids'] = [l.get('id') for l in options.get('locations') if l.get('selected')]
 
         company_ids = []
         if options.get('multi_company'):
@@ -953,6 +932,10 @@ class StockCustomReport(models.AbstractModel):
             date_to = options['date'].get('date_to') or options['date'].get('date') or fields.Date.today()
             period_domain = [('state', '=', 'draft'), ('date', '<=', date_to)]
             options['unposted_in_period'] = bool(self.env['stock.move'].search_count(period_domain))
+
+        if options.get('locations'):
+            locations_selected = set(location['id'] for location in options['locations'] if location.get('selected'))
+
 
 
         report_manager = self._get_report_manager(options)
