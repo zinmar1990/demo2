@@ -1,6 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 <data>
+
+    <template id="search_template_locations">
+        <a type="button" class="dropdown-toggle" data-toggle="dropdown">
+            <span class="fa fa-book"/>
+            Locations:
+            <t t-set="selected_locations" t-value="options.get('name_account_group') or ', '.join(location.get('code') for location in options['locations'] if location.get('selected'))"/>
+            <t t-if="selected_locations">
+                <t t-esc="selected_locations"/>
+            </t>
+            <t t-else="">
+                All
+            </t>
+        </a>
+        <div class="dropdown-menu o_filters_menu" role="menu">
+            <t t-foreach="options['locations']" t-as="a">
+                <t t-if="a.get('id') == 'divider'">
+                    <div role="separator" class="dropdown-divider"/>
+                    <b role="menuitem" class="ml4 dropdown-item-text"><t t-esc="a.get('name')"/></b>
+                    <div role="separator" class="dropdown-divider"/>
+                </t>
+                <t t-if="a.get('id') != 'divider'">
+                    <t t-if="a.get('id') == 'group'">
+                        <a role="menuitem" class="dropdown-item js_account_report_group_choice_filter" data-filter="locations" t-att-data-id="a.get('id')" t-att-data-member-ids="a.get('ids')">
+                            <t t-esc="a.get('name')"/>
+                        </a>
+                    </t>
+                    <t t-else="">
+                        <a role="menuitem" class="dropdown-item js_account_report_choice_filter" t-att-title="a.get('name')+ '-' + a.get('code')" t-att-data-id="a.get('id')" data-filter="locations">
+                            <t t-esc="a.get('name')"/>
+                        </a>
+                    </t>
+                </t>
+            </t>
+        </div>
+    </template>
+
     <template id="template_stock_ledger_report" inherit_id="account_reports.main_template" primary="True">
         <xpath expr="//div[hasclass('o_account_reports_header')]" position="replace">
             <div class="o_account_reports_header">
@@ -37,7 +73,9 @@
         <div class="btn-group o_dropdown o_account_reports_filter_date_cmp" t-if="options.get('comparison') != None">
             <t t-call="account_reports.search_template_comparison"/>
         </div>
-
+        <div class="btn-group o_dropdown o_account_reports_filter_accounts" t-if="options.get('locations') != None">
+                <t t-call="sme_stock_ledger.search_template_locations"/>
+        </div>
         <div id="extra_options_dropdown" class="btn-group o_dropdown o_account_reports_filter_bool" t-if="options.get('cash_basis') != None or options.get('all_entries') != None or options.get('unfold_all') != None">
             <t t-call="sme_stock_ledger.search_template_extra_options"/>
         </div>

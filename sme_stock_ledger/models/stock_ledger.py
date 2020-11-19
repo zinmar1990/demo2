@@ -14,12 +14,8 @@ class ReportStockLedger(models.AbstractModel):
     filter_date = {'mode': 'range', 'filter': 'this_year'}
     filter_all_entries = False
     filter_unfold_all = False
-    # filter_account_type = [
-    #     {'id': 'receivable', 'name': _lt('Receivable'), 'selected': False},
-    #     {'id': 'payable', 'name': _lt('Payable'), 'selected': False},
-    # ]
-    # filter_unreconciled = False
     filter_partner = False
+
 
     @api.model
     def _get_templates(self):
@@ -96,11 +92,18 @@ class ReportStockLedger(models.AbstractModel):
         # Create the currency table.
 
 
-        # Get sums for all partners.
+        # Get sums for all stocks.
         # period: [('date' <= options['date_to']), ('date' >= options['date_from'])]
         new_options = self._get_options_sum_balance(options)
+
         tables, where_clause, where_params = self._query_get(new_options, domain=domain)
         params += where_params
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                where_clause += ' AND (stock_move_line.location_id IN %s) OR (stock_move_line.location_dest_id IN %s)'
+                params += (tuple(locations or [0]),tuple(locations or [0]),)
+
         queries.append('''
             SELECT
                 stock_move_line.product_id        AS groupby,
@@ -129,7 +132,7 @@ class ReportStockLedger(models.AbstractModel):
                 SUM(ROUND(stock_valuation_layer.quantity)) AS balance
             FROM %s
             LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
-            LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+            INNER JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
             WHERE %s
             GROUP BY stock_move_line.product_id
         ''' % (tables, where_clause))
@@ -160,6 +163,11 @@ class ReportStockLedger(models.AbstractModel):
         new_options = self._get_options_sum_balance(options)
         tables, where_clause, where_params = self._query_get(new_options, domain=domain)
 
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                where_clause += ' AND (stock_move_line.location_id IN %s) OR (stock_move_line.location_dest_id IN %s)'
+                where_params += (tuple(locations or [0]),tuple(locations or [0]),)
 
         query = '''
             SELECT
@@ -188,7 +196,7 @@ class ReportStockLedger(models.AbstractModel):
             LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
             LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
             LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id              
-            LEFT JOIN stock_valuation_layer layer           ON layer.stock_move_id = stock_move.id 
+            INNER JOIN stock_valuation_layer layer           ON layer.stock_move_id = stock_move.id 
             LEFT JOIN stock_picking picking           ON picking.id = stock_move.picking_id
             LEFT JOIN res_partner partner               ON partner.id = picking.partner_id                
             WHERE %s
