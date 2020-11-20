@@ -68,6 +68,61 @@ class ReportStockLedger(models.AbstractModel):
     ####################################################
     # QUERIES
     ####################################################
+    @api.model
+    def _get_query_sums_transfer(self, options,locations, expanded_product=None):
+        params = []
+        queries = []
+
+        if expanded_product:
+            domain = [('product_id', '=', expanded_product.id)]
+        else:
+            domain = []
+        new_options = self._get_options_sum_balance(options)
+        tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+        params += where_params
+        where_clause += ' AND stock_move_line.location_id IN %s '
+        params += locations
+        queries.append('''
+           SELECT
+               stock_move_line.product_id  AS product_id,
+               0.0 as debit,
+               stock_move_line.qty_done    AS credit
+           FROM %s
+           LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+           LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+           LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+           LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+           WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+               ''' % (tables, where_clause))
+
+        # sum internal transfer In
+        tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+        params += where_params
+        where_clause += ' AND stock_move_line.location_dest_id IN %s '
+        params += locations
+        queries.append('''
+            SELECT
+               stock_move_line.product_id AS product_id,       
+               stock_move_line.qty_done AS debit,
+               0.0 as credit                     
+           FROM %s
+           LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+           LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+           LEFT JOIN stock_location source_location  ON source_location.id = stock_move_line.location_id
+           LEFT JOIN stock_location dest_location  ON dest_location.id = stock_move_line.location_dest_id
+           WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+               ''' % (tables, where_clause))
+
+        query = '''
+            SELECT A.product_id as groupby,
+            \'sum\' as key,
+             sum(A.debit) as debit,
+             sum(A.credit) as credit,
+             sum(A.debit - A.credit) as balance 
+             FROM ( ''' + ' UNION ALL '.join(queries) + ''' )A 
+             GROUP BY A.product_id '''
+
+        return query,params
 
     @api.model
     def _get_query_sums(self, options, expanded_product=None):
@@ -95,13 +150,12 @@ class ReportStockLedger(models.AbstractModel):
         # Get sums for all stocks.
         # period: [('date' <= options['date_to']), ('date' >= options['date_from'])]
         new_options = self._get_options_sum_balance(options)
-
         tables, where_clause, where_params = self._query_get(new_options, domain=domain)
         params += where_params
         if options.get('locations'):
             locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
             if locations:
-                where_clause += ' AND (stock_move_line.location_id IN %s) OR (stock_move_line.location_dest_id IN %s)'
+                where_clause += ' AND (stock_move_line.location_id IN %s OR stock_move_line.location_dest_id IN %s)'
                 params += (tuple(locations or [0]),tuple(locations or [0]),)
 
         queries.append('''
@@ -136,6 +190,51 @@ class ReportStockLedger(models.AbstractModel):
             WHERE %s
             GROUP BY stock_move_line.product_id
         ''' % (tables, where_clause))
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                # sum internal transfer out
+                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+                params += where_params
+                where_clause += ' AND ( stock_move_line.location_id IN %s )'
+                params += (tuple(locations or [0]),)
+                queries.append('''
+                   SELECT
+                       stock_move_line.product_id        AS groupby,
+                       'initial_balance'                 AS key,
+                       0.0 as debit,
+                       sum(0-stock_move_line.qty_done )   AS credit,
+                       sum(0-stock_move_line.qty_done )   AS balance
+                   FROM %s
+                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                   LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                   WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                   GROUP BY stock_move_line.product_id
+                       ''' % (tables, where_clause))
+
+                # sum internal transfer In
+                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+                params += where_params
+                where_clause += ' AND ( stock_move_line.location_dest_id IN %s )'
+                params += (tuple(locations or [0]),)
+                queries.append('''
+                   SELECT
+                       stock_move_line.product_id        AS groupby,
+                       'initial_balance'                AS key,
+                       sum(stock_move_line.qty_done )   AS debit,
+                       0.0 as credit,
+                       sum(stock_move_line.qty_done )   AS balance
+                   FROM %s
+                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                   LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                   WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                  GROUP BY stock_move_line.product_id
+                       ''' % (tables, where_clause))
+
 
         return ' UNION ALL '.join(queries), params
 
@@ -150,7 +249,8 @@ class ReportStockLedger(models.AbstractModel):
         :return:                    (query, params)
         '''
         unfold_all = options.get('unfold_all') or (self._context.get('print_mode') and not options['unfolded_lines'])
-
+        params = []
+        queries = []
         # Get sums for the account move lines.
         # period: [('date' <= options['date_to']), ('date', '>=', options['date_from'])]
         if expanded_product:
@@ -162,14 +262,14 @@ class ReportStockLedger(models.AbstractModel):
 
         new_options = self._get_options_sum_balance(options)
         tables, where_clause, where_params = self._query_get(new_options, domain=domain)
-
+        params += where_params
         if options.get('locations'):
             locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
             if locations:
-                where_clause += ' AND (stock_move_line.location_id IN %s) OR (stock_move_line.location_dest_id IN %s)'
-                where_params += (tuple(locations or [0]),tuple(locations or [0]),)
+                where_clause += ' AND (stock_move_line.location_id IN %s OR stock_move_line.location_dest_id IN %s)'
+                params += (tuple(locations or [0]),tuple(locations or [0]),)
 
-        query = '''
+        queries.append('''
             SELECT
                 stock_move_line.id,
                 stock_move_line.date,
@@ -189,7 +289,7 @@ class ReportStockLedger(models.AbstractModel):
                 partner.name                            AS partner_name,              
                 source_location.complete_name           AS source_name,
                 dest_location.complete_name             AS dest_name
-            FROM stock_move_line
+            FROM %s
             LEFT JOIN stock_move stock_move_line__move_id ON stock_move_line__move_id.id = stock_move_line.move_id           
             LEFT JOIN res_company company               ON company.id = stock_move_line.company_id           
             LEFT JOIN uom_uom uom               ON uom.id = stock_move_line.product_uom_id
@@ -199,18 +299,120 @@ class ReportStockLedger(models.AbstractModel):
             INNER JOIN stock_valuation_layer layer           ON layer.stock_move_id = stock_move.id 
             LEFT JOIN stock_picking picking           ON picking.id = stock_move.picking_id
             LEFT JOIN res_partner partner               ON partner.id = picking.partner_id                
-            WHERE %s
-            ORDER BY stock_move_line.id
-        ''' % (where_clause)
+            WHERE %s          
+        ''' % (tables,where_clause))
 
-        if offset:
-            query += ' OFFSET %s '
-            where_params.append(offset)
-        if limit:
-            query += ' LIMIT %s '
-            where_params.append(limit)
+        # internal transfer in and out by location
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+                params += where_params
+                where_clause += ' AND ( stock_move_line.location_dest_id IN %s )'
+                params += (tuple(locations or [0]),)
+                queries.append('''
+                      SELECT
+                         stock_move_line.id,
+                         stock_move_line.date,
+                         stock_move.origin,
+                         stock_move.date_expected,
+                         uom.name as uom_name,
+                         stock_move_line.reference,
+                         stock_move_line.company_id,
+                         stock_move_line.location_id,
+                         stock_move_line.location_dest_id,
+                         stock_move_line.product_id,
+                         stock_move.partner_id,
+                         stock_move_line.qty_done AS debit,
+                         0.0 AS credit,
+                         stock_move_line.qty_done AS balance,
+                         stock_move_line__move_id.name           AS move_name,
+                         partner.name                            AS partner_name,
+                         source_location.complete_name           AS source_name,
+                         dest_location.complete_name             AS dest_name
+                     FROM %s
+                     LEFT JOIN stock_move stock_move_line__move_id ON stock_move_line__move_id.id = stock_move_line.move_id
+                     LEFT JOIN res_company company               ON company.id = stock_move_line.company_id
+                     LEFT JOIN uom_uom uom               ON uom.id = stock_move_line.product_uom_id
+                     LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                     LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                     LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                     LEFT JOIN stock_picking picking           ON picking.id = stock_move.picking_id
+                     LEFT JOIN res_partner partner               ON partner.id = picking.partner_id
+                     WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                         ''' % (tables, where_clause))
 
-        return query, where_params
+                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+                params += where_params
+                where_clause += ' AND ( stock_move_line.location_id IN %s )'
+                params += (tuple(locations or [0]),)
+                queries.append('''
+                    SELECT
+                       stock_move_line.id,
+                       stock_move_line.date,
+                       stock_move.origin,
+                       stock_move.date_expected,
+                       uom.name as uom_name,
+                       stock_move_line.reference,
+                       stock_move_line.company_id,
+                       stock_move_line.location_id,             
+                       stock_move_line.location_dest_id,
+                       stock_move_line.product_id,
+                       stock_move.partner_id,
+                       0.0 AS debit,
+                       stock_move_line.qty_done AS credit,
+                       0-stock_move_line.qty_done AS balance,
+                       stock_move_line__move_id.name           AS move_name,                
+                       partner.name                            AS partner_name,              
+                       source_location.complete_name           AS source_name,
+                       dest_location.complete_name             AS dest_name
+                   FROM %s
+                   LEFT JOIN stock_move stock_move_line__move_id ON stock_move_line__move_id.id = stock_move_line.move_id           
+                   LEFT JOIN res_company company               ON company.id = stock_move_line.company_id           
+                   LEFT JOIN uom_uom uom               ON uom.id = stock_move_line.product_uom_id
+                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id    
+                   LEFT JOIN stock_picking picking           ON picking.id = stock_move.picking_id
+                   LEFT JOIN res_partner partner               ON partner.id = picking.partner_id                 
+                           WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s                        
+                               ''' % (tables,where_clause))
+
+            else:
+                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+                params += where_params
+                queries.append('''
+                    SELECT
+                       stock_move_line.id,
+                       stock_move_line.date,
+                       stock_move.origin,
+                       stock_move.date_expected,
+                       uom.name as uom_name,
+                       stock_move_line.reference,
+                       stock_move_line.company_id,
+                       stock_move_line.location_id,
+                       stock_move_line.location_dest_id,
+                       stock_move_line.product_id,
+                       stock_move.partner_id,
+                       stock_move_line.qty_done AS debit,
+                       stock_move_line.qty_done AS credit,
+                       0.0 AS balance,
+                       stock_move_line__move_id.name           AS move_name,
+                       partner.name                            AS partner_name,
+                       source_location.complete_name           AS source_name,
+                       dest_location.complete_name             AS dest_name
+                   FROM %s
+                   LEFT JOIN stock_move stock_move_line__move_id ON stock_move_line__move_id.id = stock_move_line.move_id
+                   LEFT JOIN res_company company               ON company.id = stock_move_line.company_id
+                   LEFT JOIN uom_uom uom               ON uom.id = stock_move_line.product_uom_id
+                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                   LEFT JOIN stock_picking picking           ON picking.id = stock_move.picking_id
+                   LEFT JOIN res_partner partner               ON partner.id = picking.partner_id
+                   WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                       ''' % (tables, where_clause))
+        return ' UNION ALL '.join(queries), params
 
     @api.model
     def _do_query(self, options, expanded_product=None):
@@ -231,11 +433,19 @@ class ReportStockLedger(models.AbstractModel):
 
         # Execute the queries and dispatch the results.
         query, params = self._get_query_sums(options, expanded_product=expanded_product)
-
         groupby_products = {}
-
         self._cr.execute(query, params)
-        for res in self._cr.dictfetchall():
+        sums = self._cr.dictfetchall()
+
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                locations = (tuple(locations or [0]),)
+                query, params = self._get_query_sums_transfer(options,locations, expanded_product=expanded_product)
+                self._cr.execute(query, params)
+                sums += self._cr.dictfetchall()
+
+        for res in sums:
             key = res['key']
             if key == 'sum':
                 if not company_currency.is_zero(res['debit']) or not company_currency.is_zero(res['credit']):
@@ -278,7 +488,6 @@ class ReportStockLedger(models.AbstractModel):
     def _get_report_line_product(self, options, product, initial_balance, debit, credit, balance):
         company_currency = self.env.company.currency_id
         unfold_all = self._context.get('print_mode') and not options.get('unfolded_lines')
-
         columns = [
             {'name': self.format_value(initial_balance), 'class': 'number'},
             {'name': self.format_value(debit), 'class': 'number'},
@@ -301,13 +510,6 @@ class ReportStockLedger(models.AbstractModel):
 
     @api.model
     def _get_report_line_move_line(self, options, product, sml, cumulated_init_balance, cumulated_balance):
-        # if sml['payment_id']:
-        #     caret_type = 'account.payment'
-        # elif sml['move_type'] in ('in_refund', 'in_invoice', 'in_receipt'):
-        #     caret_type = 'account.invoice.in'
-        # elif sml['move_type'] in ('out_refund', 'out_invoice', 'out_receipt'):
-        #     caret_type = 'account.invoice.out'
-        # else:
         caret_type = 'stock.move'
 
         columns = [
