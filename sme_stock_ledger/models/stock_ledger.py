@@ -69,62 +69,6 @@ class ReportStockLedger(models.AbstractModel):
     # QUERIES
     ####################################################
     @api.model
-    def _get_query_sums_transfer(self, options,locations, expanded_product=None):
-        params = []
-        queries = []
-
-        if expanded_product:
-            domain = [('product_id', '=', expanded_product.id)]
-        else:
-            domain = []
-        new_options = self._get_options_sum_balance(options)
-        tables, where_clause, where_params = self._query_get(new_options, domain=domain)
-        params += where_params
-        where_clause += ' AND stock_move_line.location_id IN %s '
-        params += locations
-        queries.append('''
-           SELECT
-               stock_move_line.product_id  AS product_id,
-               0.0 as debit,
-               stock_move_line.qty_done    AS credit
-           FROM %s
-           LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
-           LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
-           LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
-           LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
-           WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
-               ''' % (tables, where_clause))
-
-        # sum internal transfer In
-        tables, where_clause, where_params = self._query_get(new_options, domain=domain)
-        params += where_params
-        where_clause += ' AND stock_move_line.location_dest_id IN %s '
-        params += locations
-        queries.append('''
-            SELECT
-               stock_move_line.product_id AS product_id,       
-               stock_move_line.qty_done AS debit,
-               0.0 as credit                     
-           FROM %s
-           LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
-           LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
-           LEFT JOIN stock_location source_location  ON source_location.id = stock_move_line.location_id
-           LEFT JOIN stock_location dest_location  ON dest_location.id = stock_move_line.location_dest_id
-           WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
-               ''' % (tables, where_clause))
-
-        query = '''
-            SELECT A.product_id as groupby,
-            \'sum\' as key,
-             sum(A.debit) as debit,
-             sum(A.credit) as credit,
-             sum(A.debit - A.credit) as balance 
-             FROM ( ''' + ' UNION ALL '.join(queries) + ''' )A 
-             GROUP BY A.product_id '''
-
-        return query,params
-
-    @api.model
     def _get_query_sums(self, options, expanded_product=None):
         ''' Construct a query retrieving all the aggregated sums to build the report. It includes:
         - sums for all accounts.
@@ -138,14 +82,11 @@ class ReportStockLedger(models.AbstractModel):
         '''
         params = []
         queries = []
-
+        locations =[]
         if expanded_product:
             domain = [('product_id', '=', expanded_product.id)]
         else:
             domain = []
-
-        # Create the currency table.
-
 
         # Get sums for all stocks.
         # period: [('date' <= options['date_to']), ('date' >= options['date_from'])]
@@ -155,88 +96,130 @@ class ReportStockLedger(models.AbstractModel):
         if options.get('locations'):
             locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
             if locations:
-                where_clause += ' AND (stock_move_line.location_id IN %s OR stock_move_line.location_dest_id IN %s)'
+                where_clause += ' AND ( stock_move_line.location_id IN %s OR stock_move_line.location_dest_id IN %s)'
                 params += (tuple(locations or [0]),tuple(locations or [0]),)
 
         queries.append('''
             SELECT
-                stock_move_line.product_id        AS groupby,
+                stock_move_line.product_id        AS product_id,
                 'sum'                               AS key,
-                SUM(ROUND(CASE WHEN stock_valuation_layer.quantity >= 0 THEN stock_valuation_layer.quantity ELSE 0 END ))   AS debit,
-                SUM(ROUND(CASE WHEN stock_valuation_layer.quantity <= 0 THEN (0-stock_valuation_layer.quantity) ELSE 0 END  ))  AS credit,
-                SUM(ROUND(stock_valuation_layer.quantity)) AS balance
+                ROUND(CASE WHEN stock_valuation_layer.quantity >= 0 THEN stock_valuation_layer.quantity ELSE 0 END )   AS debit,
+                ROUND(CASE WHEN stock_valuation_layer.quantity <= 0 THEN (0-stock_valuation_layer.quantity) ELSE 0 END  )  AS credit
             FROM %s
             LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
             LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
             WHERE %s
-            GROUP BY stock_move_line.product_id
         ''' % (tables,  where_clause))
+        if locations:
+            # sum internal transfer out
+            tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+            params += where_params
+            where_clause += ' AND stock_move_line.location_id IN %s '
+            params += (tuple(locations or [0]),)
+            queries.append('''
+                       SELECT
+                           stock_move_line.product_id  AS product_id,
+                           \'sum\' as key,
+                           0.0 as debit,
+                           stock_move_line.qty_done    AS credit
+                       FROM %s
+                       LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                       LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                       LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                       LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                       WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                           ''' % (tables, where_clause))
+
+            # sum internal transfer In
+            tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+            params += where_params
+            where_clause += ' AND stock_move_line.location_dest_id IN %s '
+            params += (tuple(locations or [0]),)
+            queries.append('''
+                        SELECT
+                           stock_move_line.product_id AS product_id,
+                           \'sum\' as key,       
+                           stock_move_line.qty_done AS debit,
+                           0.0 as credit                     
+                       FROM %s
+                       LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                       LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                       LEFT JOIN stock_location source_location  ON source_location.id = stock_move_line.location_id
+                       LEFT JOIN stock_location dest_location  ON dest_location.id = stock_move_line.location_dest_id
+                       WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
+                           ''' % (tables, where_clause))
+
 
         # Get sums for the initial balance.
         # period: [('date' <= options['date_from'] - 1)]
         new_options = self._get_options_initial_balance(options)
         tables, where_clause, where_params = self._query_get(new_options, domain=domain)
         params += where_params
+        if options.get('locations'):
+            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
+            if locations:
+                where_clause += ' AND (stock_move_line.location_id IN %s OR stock_move_line.location_dest_id IN %s)'
+                params += (tuple(locations or [0]),tuple(locations or [0]),)
         queries.append('''
             SELECT
                 stock_move_line.product_id        AS groupby,
                 'initial_balance'                   AS key,
-                SUM(ROUND(CASE WHEN stock_valuation_layer.quantity >= 0 THEN stock_valuation_layer.quantity ELSE 0 END ))   AS debit,
-                SUM(ROUND(CASE WHEN stock_valuation_layer.quantity <= 0 THEN (0-stock_valuation_layer.quantity) ELSE 0 END  ))  AS credit,
-                SUM(ROUND(stock_valuation_layer.quantity)) AS balance
+                ROUND(CASE WHEN stock_valuation_layer.quantity >= 0 THEN stock_valuation_layer.quantity ELSE 0 END ) AS debit,
+                ROUND(CASE WHEN stock_valuation_layer.quantity <= 0 THEN (0-stock_valuation_layer.quantity) ELSE 0 END )  AS credit
             FROM %s
             LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
             INNER JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
             WHERE %s
-            GROUP BY stock_move_line.product_id
         ''' % (tables, where_clause))
-        if options.get('locations'):
-            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
-            if locations:
-                # sum internal transfer out
-                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
-                params += where_params
-                where_clause += ' AND ( stock_move_line.location_id IN %s )'
-                params += (tuple(locations or [0]),)
-                queries.append('''
-                   SELECT
-                       stock_move_line.product_id        AS groupby,
-                       'initial_balance'                 AS key,
-                       0.0 as debit,
-                       sum(0-stock_move_line.qty_done )   AS credit,
-                       sum(0-stock_move_line.qty_done )   AS balance
-                   FROM %s
-                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
-                   LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
-                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
-                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
-                   WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
-                   GROUP BY stock_move_line.product_id
+
+        if locations:
+            tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+            params += where_params
+            where_clause += ' AND ( stock_move_line.location_id IN %s )'
+            params += (tuple(locations or [0]),)
+            queries.append('''
+                       SELECT
+                           stock_move_line.product_id        AS product_id,
+                           'initial_balance'                 AS key,
+                           0.0 as debit,
+                           stock_move_line.qty_done    AS credit
+                       FROM %s
+                       LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                       LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                       LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                       LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                       WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s    
+                           ''' % (tables, where_clause))
+
+            tables, where_clause, where_params = self._query_get(new_options, domain=domain)
+            params += where_params
+            where_clause += ' AND ( stock_move_line.location_dest_id IN %s )'
+            params += (tuple(locations or [0]),)
+            queries.append('''
+                       SELECT
+                           stock_move_line.product_id        AS product_id,
+                           'initial_balance'                 AS key,
+                           stock_move_line.qty_done    AS debit,
+                           0.0 as credit                       
+                       FROM %s
+                       LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
+                       LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
+                       LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
+                       LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
+                       WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
                        ''' % (tables, where_clause))
 
-                # sum internal transfer In
-                tables, where_clause, where_params = self._query_get(new_options, domain=domain)
-                params += where_params
-                where_clause += ' AND ( stock_move_line.location_dest_id IN %s )'
-                params += (tuple(locations or [0]),)
-                queries.append('''
-                   SELECT
-                       stock_move_line.product_id        AS groupby,
-                       'initial_balance'                AS key,
-                       sum(stock_move_line.qty_done )   AS debit,
-                       0.0 as credit,
-                       sum(stock_move_line.qty_done )   AS balance
-                   FROM %s
-                   LEFT JOIN stock_move ON stock_move.id = stock_move_line.move_id
-                   LEFT JOIN stock_valuation_layer ON stock_valuation_layer.stock_move_id = stock_move.id
-                   LEFT JOIN stock_location source_location           ON source_location.id = stock_move_line.location_id
-                   LEFT JOIN stock_location dest_location           ON dest_location.id = stock_move_line.location_dest_id
-                   WHERE source_location.usage = 'internal' AND dest_location.usage = 'internal' AND %s
-                  GROUP BY stock_move_line.product_id
-                       ''' % (tables, where_clause))
+        query = '''
+            SELECT A.product_id as groupby,
+             A.key as key,
+             sum(A.debit) as debit,
+             sum(A.credit) as credit,
+             sum(A.debit - A.credit) as balance 
+             FROM ( ''' + ' UNION ALL '.join(queries) + ''' )A 
+             GROUP BY A.product_id,A.key '''
 
+        return query,params
 
-        return ' UNION ALL '.join(queries), params
 
     @api.model
     def _get_query_smls(self, options, expanded_product=None, offset=None, limit=None):
@@ -435,17 +418,8 @@ class ReportStockLedger(models.AbstractModel):
         query, params = self._get_query_sums(options, expanded_product=expanded_product)
         groupby_products = {}
         self._cr.execute(query, params)
-        sums = self._cr.dictfetchall()
 
-        if options.get('locations'):
-            locations = [l.get('id') for l in options.get('locations') if l.get('selected')]
-            if locations:
-                locations = (tuple(locations or [0]),)
-                query, params = self._get_query_sums_transfer(options,locations, expanded_product=expanded_product)
-                self._cr.execute(query, params)
-                sums += self._cr.dictfetchall()
-
-        for res in sums:
+        for res in self._cr.dictfetchall() :
             key = res['key']
             if key == 'sum':
                 if not company_currency.is_zero(res['debit']) or not company_currency.is_zero(res['credit']):
