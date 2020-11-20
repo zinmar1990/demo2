@@ -100,7 +100,7 @@ class StockCustomReport(models.AbstractModel):
 
     @api.model
     def _get_filter_locations(self):
-        return self.env['stock.location'].search([('usage', '=','internal'),('location_id.usage', '=','view'),
+        return self.env['stock.location'].search([('usage', '=','internal'),
             ('company_id', 'in', self.env.user.company_ids.ids or [self.env.company.id])
         ], order="company_id, name")
 
